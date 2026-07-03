@@ -4,3 +4,4 @@
 .DS_STORE
 *.pem
 /.vs/slnx.sqlite
+decommission/decommission.env
