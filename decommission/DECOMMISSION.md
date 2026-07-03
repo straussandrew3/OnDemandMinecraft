@@ -53,7 +53,34 @@ Verify the backup landed and isn't empty before continuing:
 du -sh ./minecraft-world-backup
 ```
 
-Do not proceed to Step 2 until this backup exists and looks complete.
+### Confirm the backup actually loads (don't skip this)
+
+A folder copy that isn't corrupted looking is not the same as a world
+that boots. Prove it by launching a throwaway local server against the
+backup with the companion script:
+
+```bash
+./verify_world_backup.sh ./minecraft-world-backup /path/to/matching-server.jar
+```
+
+`server.jar` must be the **same Minecraft server version** that was
+running on the AWS instance (download from
+https://www.minecraft.net/en-us/download/server if you don't have it
+locally) — a version mismatch can fail to load or silently convert the
+world. Requires a JDK matching that server version already on the local
+machine.
+
+The script boots the world on an isolated local port (`25599`,
+offline-mode) with no player intervention, watches the log for a clean
+`Done (...)!` startup line, then stops the server and reports
+`LOADED`, `CRASHED`, or `ERROR`. If you want to actually walk around and
+visually confirm builds/inventory, leave the throwaway server running
+(comment out the `stop` in the script, or just start `server.jar`
+manually in the copied `world` folder) and connect with a regular
+Minecraft client to `localhost:25599`.
+
+Do not proceed to Step 2 until `verify_world_backup.sh` reports
+`LOADED`.
 
 ## Step 2 — Terminate the EC2 instance
 
@@ -135,3 +162,44 @@ aws budgets describe-budgets --account-id <ACCOUNT_ID>
 
 All of the above should return empty (or the budget should be gone) once
 decommissioning is complete.
+
+## Step 7 — Confirm actual spend hit $0 (check back ~1 month later)
+
+Resource checks in Step 6 catch what's *visible* right now, but AWS
+billing has a lag, and some charges (partial-month EC2/EBS usage from
+before termination, small per-resource fees) only show up on the next
+bill. Deleting the Budget in Step 4 also means you'll no longer get an
+alert if something was missed — so this step has to be done manually.
+
+**~30 days after running Steps 1-5**, check actual cost with Cost
+Explorer (needs `ce:GetCostAndUsage` permission):
+
+```bash
+aws ce get-cost-and-usage \
+  --time-period Start=$(date -d '30 days ago' +%Y-%m-%d),End=$(date +%Y-%m-%d) \
+  --granularity MONTHLY \
+  --metrics UnblendedCost \
+  --group-by Type=DIMENSION,Key=SERVICE
+```
+
+(On macOS without GNU `date`, use `date -v-30d +%Y-%m-%d` instead of
+`date -d '30 days ago' +%Y-%m-%d`.)
+
+If the total is not $0, the `SERVICE` breakdown tells you where to look.
+Common leftover-cost culprits this project can leave behind that Step 3
+doesn't cover:
+
+- **S3** — a world backup bucket left in place bills for storage even
+  with no other activity.
+- **Route 53** — a hosted zone (if one was ever created for the
+  server's IP) bills ~$0.50/month regardless of traffic.
+- **CloudWatch** — custom alarms, dashboards, or log groups with a
+  retention policy can carry small storage/monitoring charges.
+- **Data transfer** — any lingering charges from before termination
+  will trail onto this bill; if the rest of the account is otherwise
+  clean, a small one-time trailing charge on this next bill is expected
+  and should disappear the bill after.
+
+If a real ongoing (non-trailing) charge shows up, find and delete the
+specific resource in the flagged service, then re-run this same Cost
+Explorer check after the following billing cycle to confirm it's gone.

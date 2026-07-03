@@ -13,8 +13,11 @@
 #   cp decommission.env.example decommission.env   # fill in your values
 #   ./decommission.sh --dry-run                    # preview actions
 #   ./decommission.sh                               # actually run
+#   ./decommission.sh --check-cost                  # re-run ~1 month later
+#                                                     # to confirm spend hit $0
 #
 # Requires: aws CLI v2, configured credentials with EC2 + Budgets access.
+# --check-cost additionally requires ce:GetCostAndUsage permission.
 
 set -euo pipefail
 
@@ -22,9 +25,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${SCRIPT_DIR}/decommission.env"
 
 DRY_RUN=false
+CHECK_COST_ONLY=false
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=true ;;
+    --check-cost) CHECK_COST_ONLY=true ;;
     *) echo "Unknown argument: $arg" >&2; exit 1 ;;
   esac
 done
@@ -43,6 +48,23 @@ source "$ENV_FILE"
 : "${ACCOUNT_ID:?Set ACCOUNT_ID in decommission.env}"
 : "${BUDGET_NAME:?Set BUDGET_NAME in decommission.env}"
 # Optional: KEY_PAIR_NAME, SECURITY_GROUP_NAME
+
+if [[ "$CHECK_COST_ONLY" == true ]]; then
+  echo "=== Cost check for account ${ACCOUNT_ID} (last 30 days) ==="
+  START_DATE=$(date -d '30 days ago' +%Y-%m-%d 2>/dev/null || date -v-30d +%Y-%m-%d)
+  END_DATE=$(date +%Y-%m-%d)
+  aws ce get-cost-and-usage \
+    --time-period "Start=${START_DATE},End=${END_DATE}" \
+    --granularity MONTHLY \
+    --metrics UnblendedCost \
+    --group-by Type=DIMENSION,Key=SERVICE \
+    --query 'ResultsByTime[0].Groups[?Metrics.UnblendedCost.Amount!=`0`].[Keys[0],Metrics.UnblendedCost.Amount]' \
+    --output table
+  echo
+  echo "If this is non-empty and not a one-time trailing charge from"
+  echo "termination, see 'Step 7' in DECOMMISSION.md for common culprits."
+  exit 0
+fi
 
 run() {
   echo "+ $*"
@@ -63,9 +85,10 @@ echo "=== AWS Decommission: region=${AWS_REGION} instance=${INSTANCE_ID} ==="
 echo "Dry run: ${DRY_RUN}"
 echo
 
-echo "Have you already backed up the Minecraft world file from this instance?"
-if ! confirm "Confirm the world backup is done and verified"; then
-  echo "Aborting. Back up the world first (see DECOMMISSION.md Step 1)." >&2
+echo "Have you backed up the Minecraft world AND confirmed it loads locally"
+echo "with verify_world_backup.sh (DECOMMISSION.md Step 1)?"
+if ! confirm "Confirm the world backup exists and reported LOADED"; then
+  echo "Aborting. Back up the world and run verify_world_backup.sh first." >&2
   exit 1
 fi
 
