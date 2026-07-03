@@ -24,6 +24,45 @@ resources and cannot be undone.
 - The AWS Account ID (`aws sts get-caller-identity --query Account --output text`).
 - Your AWS Budget's name (`aws budgets describe-budgets --account-id <ACCOUNT_ID>`).
 
+## Mobile-only path: AWS CloudShell
+
+If you only have a phone and no computer, don't install anything or
+hand your AWS credentials to any third party/agent. Use **AWS
+CloudShell** instead — it's a browser-based terminal at
+console.aws.amazon.com (works in a phone browser), already
+authenticated as you, with the AWS CLI preinstalled. Every `aws ...`
+command in Steps 1-7 below runs unmodified inside it. The only part
+that needs adapting for phone use is getting the world backup file
+*out* of CloudShell and onto your phone, since CloudShell can't `scp`
+directly to a phone's filesystem:
+
+1. Sign in at console.aws.amazon.com on your phone, then open
+   **CloudShell** (icon in the top nav bar).
+2. Use the CloudShell **Actions** menu → **Upload file** to upload your
+   `.pem` key file (the same one used for `ssh`/`scp` to the instance).
+   Then: `chmod 400 yourkey.pem`
+3. Run Step 1's `describe-instances` and `scp` commands as written,
+   using the uploaded key — this pulls the world folder into
+   CloudShell's own storage.
+4. Zip it up: `zip -r minecraft-world-backup.zip minecraft-world-backup`
+5. Use CloudShell's **Actions** menu → **Download file**, enter the
+   path (e.g. `minecraft-world-backup.zip`), and it downloads straight
+   to your phone through the browser (Files app / Downloads).
+6. To run `verify_world_backup.sh` inside CloudShell before
+   terminating anything, install a JDK first (CloudShell is Amazon
+   Linux): `sudo yum install -y java-21-amazon-corretto-headless`
+   (match the major Java version your Minecraft server version needs),
+   then run the script against the CloudShell copy of the backup and
+   your uploaded/downloaded `server.jar`.
+7. Continue with Steps 2-7 in the same CloudShell session — same
+   commands, no changes needed.
+
+Don't leave the world backup sitting in an S3 bucket as its permanent
+home if the goal is genuine $0 spend — S3 storage isn't free. Treat S3
+(if you use it at all) as a relay, not the final resting place: get the
+zip onto your phone (or a Drive/cloud storage you already pay flat for)
+via CloudShell's Download action, then delete any S3 copy per Step 5.
+
 ## Step 1 — Back up the world file (do this before anything else)
 
 If the instance is stopped, start it first so you can reach it over SSH:
