@@ -44,30 +44,57 @@ user's local computer, where real `aws` CLI access can be set up.
   check-in will just confirm success; no action needed on your end for
   that specifically.
 
-## Get AWS CLI access (5 steps, ~5 minutes)
+## Get AWS CLI access (~2 minutes, plus security notes)
 
-1. **Install AWS CLI v2** if not already installed:
-   - macOS: `brew install awscli`
-   - Linux: see https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
-   - Windows: download/run the MSI from the same page.
-2. **Get an access key**: AWS Console → IAM → Users → (your user) →
-   Security credentials tab → Create access key. (If the original
-   `ACCESS_KEY`/`SECRET_KEY` this project used, per the values that
-   would have gone into `configuration.py`, are still active, you can
-   reuse those instead of creating new ones.)
-3. **Configure the CLI**: `aws configure` — paste in the Access Key ID,
-   Secret Access Key, the region this project's instance runs in
-   (matches `ec2_region` in `configuration.py`), and `json` for output
-   format.
-4. **Verify it works**: `aws sts get-caller-identity` — should print
-   your account ID and user ARN, not an error.
-5. **Verify it has enough permissions**: `aws ec2 describe-instances
-   --region <your-region>` and `aws budgets describe-budgets
-   --account-id <account-id-from-step-4>`. If either returns
-   `AccessDenied`, attach a broader policy to the IAM user in the
-   Console (e.g. `AmazonEC2FullAccess` plus a Budgets permission) before
-   continuing — the runbook and script need EC2, Budgets, and (for the
-   later cost check) Cost Explorer (`ce:GetCostAndUsage`) permissions.
+**1. Install:**
+```bash
+# macOS
+brew install awscli
+
+# Linux
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" && unzip awscliv2.zip && sudo ./aws/install
+
+# Windows (PowerShell)
+winget install Amazon.AWSCLI
+```
+
+**2. Configure:**
+```bash
+aws configure
+```
+Paste in an Access Key ID, Secret Access Key, the region this
+project's instance runs in (matches `ec2_region` in
+`configuration.py`), and `json` for output format. `aws configure`
+writes these to `~/.aws/credentials` in plaintext on disk — normal and
+expected for local CLI use, just don't let that file get synced to a
+cloud backup, dotfiles repo, or committed anywhere.
+
+**3. Verify:** `aws sts get-caller-identity` should print an account ID
+and user ARN, not an error.
+
+### Which access key to use — do this part securely
+
+- **Don't paste secret keys into chat, commit messages, or any file in
+  this repo.** `decommission.env` is already gitignored for exactly
+  this reason — keep it that way.
+- If the original `ACCESS_KEY`/`SECRET_KEY` this project used (the
+  values that would have gone into `configuration.py`) are still
+  active, you *can* reuse them for speed — but since that key has been
+  sitting around since initial setup and its exact scope/history isn't
+  tracked anywhere, prefer creating a **fresh** access key for this
+  one-off decommission task instead: AWS Console → IAM → Users → your
+  user → Security credentials tab → Create access key.
+- Either way, this task only needs EC2, Budgets, and (for the later
+  cost check) Cost Explorer (`ce:GetCostAndUsage`) permissions. If
+  `aws ec2 describe-instances --region <region>` or `aws budgets
+  describe-budgets --account-id <account-id>` returns `AccessDenied`,
+  attach what's missing rather than reaching for a broad admin policy.
+- **When the decommission is fully done and verified**, deactivate or
+  delete whichever access key you used (IAM → Users → Security
+  credentials → Deactivate/Delete) rather than leaving it live
+  indefinitely — it won't be needed again after this task, and a key
+  with EC2-terminate/Budgets-delete permissions is not something to
+  leave lying around unused.
 
 ## What to do next
 
