@@ -5,10 +5,13 @@
 
 ## Summary
 
-All Minecraft-related AWS resources terminated. World backup verified
-locally before any destructive action. The account still has residual
-charges (~$2.72/mo) from KMS, EFS, and Route 53 that are **not related
-to this project** — noted in the final sweep section below.
+All **EC2-based** Minecraft resources (the OnDemandMinecraft project)
+terminated and world backup verified. The `minecraft.andrewbrett.xyz.`
+Route 53 hosted zone deleted. However, a second **CDK/Fargate-based**
+Minecraft infrastructure was discovered still live in the account — it
+was not part of this project's scope but is responsible for the KMS and
+EFS charges previously listed as "unrelated." See the CDK infrastructure
+section below for full details and risk assessment before further action.
 
 ## What was non-standard
 
@@ -72,24 +75,105 @@ Contains the full world folder plus all server config files and the
 original `server.jar`. Keep this somewhere with redundancy (Time Machine,
 iCloud, Google Drive, etc.) if you want a long-term copy.
 
+## Route 53 zone deletion (2026-07-04)
+
+`minecraft.andrewbrett.xyz.` (zone `Z104067212IEK8RB32Q83`) deleted. The
+A record pointing to `34.224.100.212` was removed first, then the zone.
+This zone was originally created by `minecraft-domain-stack` (CDK), which
+is now in an inconsistent state — see CDK infrastructure section below.
+
+Going-forward Route 53 cost: **~$0.50/mo** (only `andrewbrett.xyz.` root
+domain remains). Minecraft-related Route 53 spend: **$0**.
+
+## Discovered: CDK/Fargate Minecraft infrastructure (not yet cleaned up)
+
+During the final sweep, a second complete Minecraft server deployment was
+found — built with AWS CDK and using ECS/Fargate instead of EC2. This is
+separate from the OnDemandMinecraft project and was never part of this
+decommission's original scope, but it is the source of the KMS and EFS
+charges.
+
+### What it is
+
+An on-demand Fargate Minecraft server: when a player queries
+`minecraft.andrewbrett.xyz` in DNS, a CloudWatch Logs subscription filter
+triggers a Lambda that sets the ECS service's desired count to 1, starting
+a Fargate task. The task mounts the EFS filesystem for persistent world
+storage. When idle, the service scales back to 0 (currently 0/0 — nothing
+running). The world data lives permanently in the EFS, not on an EC2 disk.
+
+### CloudFormation stacks
+
+| Stack | Status | Contains |
+|---|---|---|
+| `minecraft-server-stack` | CREATE_COMPLETE | ECS cluster, Fargate service/task, EFS filesystem, VPC+subnets, security groups, SNS topic, Lambda, IAM roles |
+| `minecraft-domain-stack` | CREATE_COMPLETE (broken) | Route 53 hosted zone (now deleted), Lambda launcher, CloudWatch Logs group, SSM params |
+| `StateMachineRole` | CREATE_COMPLETE | IAM role only |
+| `LAMBDAROLE` | CREATE_COMPLETE | IAM role only |
+| `CDKToolkit` | CREATE_COMPLETE | CDK bootstrap (S3 bucket) |
+
+### Active billing from this infrastructure
+
+| Resource | ID | Monthly cost |
+|---|---|---|
+| KMS customer key (`alias/mc`) | `8b461e69-7d43-439c-adfa-92dab68f4c10` | ~$1.00 |
+| EFS filesystem | `fs-081089ad1ba0507bc` | ~$0.41 (~1.4 GB) |
+
+ECS Fargate: **$0** — desired count is 0, no tasks running.
+
+### Risk assessment (do not delete without reading this)
+
+**EFS filesystem (`fs-081089ad1ba0507bc`)** — contains ~1.4 GB of Minecraft
+world data at the `/minecraft` access point. This is almost certainly a
+*different* world than the one backed up from the EC2 snapshots (the CDK
+server was a separate, later deployment). **Must be backed up before
+deletion.** Mount it on a temporary instance (same approach used for the EC2
+volume) and SCP the contents before tearing down the stack.
+
+**KMS key (`alias/mc`)** — used only to encrypt the EFS filesystem. Has no
+grants, no other consumers. Safe to schedule for deletion *after* the EFS is
+deleted (7-day minimum waiting period enforced by AWS; cancelable during that
+window). It is irreversible once the waiting period completes, but since
+EFS will be gone, there's nothing left for it to decrypt.
+
+**`minecraft-domain-stack`** — the Route 53 hosted zone it created has
+already been deleted manually. CloudFormation delete may error on that
+resource but should proceed past it; worst case, the zone resource can be
+skipped with a manual `--retain-resources` flag.
+
+**`minecraft-server-stack`** — do not delete until EFS world data is backed
+up. Once backed up, deleting the stack via CloudFormation will cleanly remove
+ECS, EFS, VPC, security groups, and all associated IAM policies.
+
+**`StateMachineRole` / `LAMBDAROLE` / `CDKToolkit`** — IAM roles and CDK
+bootstrap only, no data. Safe to delete any time; no ongoing cost.
+
+### Recommended next steps (not yet executed)
+
+1. Back up EFS world data (mount on temp instance, SCP locally).
+2. Delete `minecraft-domain-stack` (stack delete, may need `--retain-resources`
+   for the already-deleted hosted zone).
+3. Delete `minecraft-server-stack` (cleans up EFS, ECS, VPC, everything).
+4. Schedule `alias/mc` KMS key for deletion (7-day window).
+5. Delete `StateMachineRole`, `LAMBDAROLE`, `CDKToolkit` stacks.
+
 ## Final resource sweep (2026-07-04)
 
 Checked: EC2 instances, Elastic IPs, EBS volumes, snapshots, load
 balancers, RDS, S3, Route 53, NAT gateways, budgets.
 
-**All Minecraft-related resources confirmed gone.** Remaining items:
+**All EC2/snapshot/budget resources confirmed gone.** Remaining items:
 
 | Resource | Detail | Monthly cost | Notes |
 |---|---|---|---|
-| Route 53 hosted zone | `minecraft.andrewbrett.xyz.` | ~$0.50 | DNS for this server — can delete |
 | Route 53 hosted zone | `andrewbrett.xyz.` | ~$0.50 | Root domain — likely intentional |
 | S3 bucket | `cdk-hnb659fds-assets-996039603186-us-east-1` | ~$0 | CDK bootstrap bucket, negligible |
-| KMS | 1 customer-managed key | ~$1.00 | Not Minecraft — from another project |
-| EFS | Elastic File System | ~$0.41 | Not Minecraft — from another project |
+| KMS customer key | `alias/mc` | ~$1.00 | For CDK EFS encryption — see CDK section |
+| EFS filesystem | `fs-081089ad1ba0507bc` | ~$0.41 | CDK world data — see CDK section |
 
-The `minecraft.andrewbrett.xyz.` hosted zone is the one item directly
-tied to this project. Deleting it saves ~$0.50/mo. The others are
-unrelated to this project and should be managed separately.
+`minecraft.andrewbrett.xyz.` Route 53 zone: **deleted** (see above).
+KMS and EFS are Minecraft-related (CDK stack) — not safe to delete without
+backing up the EFS world data first. See CDK infrastructure section above.
 
 ## Cost history (Jul 2025 – Jun 2026, by service)
 
