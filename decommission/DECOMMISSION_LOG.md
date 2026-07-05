@@ -9,11 +9,12 @@
 OnDemandMinecraft and CDK/Fargate-based) are fully torn down. All world
 data backed up and verified locally before any destructive action.
 
-**Irreducible floor going forward: ~$0.50/mo** — the `andrewbrett.xyz.`
-root domain Route 53 hosted zone (unrelated to Minecraft, presumably
-intentional). The KMS key (`alias/mc`) is in PendingDeletion and stops
-billing on **2026-07-11**. After that date, Minecraft-related AWS spend
-is permanently $0.
+**Decommission complete. Ongoing AWS spend: $0.**
+
+The `andrewbrett.xyz.` domain registration was deleted and its hosted zone
+removed on 2026-07-04. The KMS key (`alias/mc`) auto-deletes 2026-07-11
+(PendingDeletion, no longer billing). After that date there are zero
+recurring charges of any kind in this AWS account related to Minecraft.
 
 ## What was non-standard
 
@@ -216,13 +217,15 @@ KMS keys, Route 53 zones, Lambda functions, budgets.
 | KMS customer key `alias/mc` | ⏳ PendingDeletion — deletes 2026-07-11 |
 | Budgets | ✅ None |
 
-**Remaining (non-Minecraft, irreducible):**
+**All resources confirmed gone. No remaining Minecraft-related spend.**
 
 | Resource | Monthly cost | Notes |
 |---|---|---|
-| Route 53 `andrewbrett.xyz.` | ~$0.50 | Root domain — unrelated to Minecraft |
-| Lambda `email_reminder_lambda` | ~$0 | Unrelated project, within free tier |
-| 4 AWS-managed KMS keys (`aws/s3`, `aws/lambda`, `aws/elasticfilesystem`, `aws/backup`) | $0 | AWS-managed keys are free |
+| KMS `alias/mc` | $0 (billing stopped) | PendingDeletion, auto-deletes 2026-07-11 |
+| Route 53 `andrewbrett.xyz.` hosted zone | $0 | Deleted 2026-07-04 |
+| `andrewbrett.xyz.` domain registration | $0 | Deleted 2026-07-04 (operation `6b21eaf5`) |
+| Lambda `email_reminder_lambda` | $0 | Unrelated project, within free tier |
+| 4 AWS-managed KMS keys | $0 | AWS-managed keys are always free |
 
 ## Cost history (Jul 2025 – Jun 2026, by service)
 
@@ -256,16 +259,15 @@ snapshotted and deleted in Nov 2025.
   them "unrelated" was incorrect; that was written before the CDK stack was discovered.
 - Route 53 (~$1/mo) covered two hosted zones. `minecraft.andrewbrett.xyz.` (deleted
   2026-07-04) and `andrewbrett.xyz.` (root domain, remains at ~$0.50/mo).
-- **Post-decommission going-forward cost: ~$0.50/mo** (root domain only) once the KMS
-  key deletion completes on 2026-07-11. Minecraft-related spend: $0.
+- **Post-decommission going-forward cost: $0.** `andrewbrett.xyz.` domain and hosted
+  zone deleted 2026-07-04. KMS key auto-deletes 2026-07-11. After that date, zero
+  recurring charges of any kind.
 
 ## Follow-up
 
-**2026-07-11** — KMS key `alias/mc` auto-deletes. No action needed; just
-confirms the $1.00/mo charge disappears from the next bill.
+**2026-07-11** — KMS key `alias/mc` auto-deletes. No action needed.
 
-**~2026-08-04** — Check AWS Cost Explorer to confirm the July bill shows
-only the `andrewbrett.xyz.` Route 53 charge (~$0.50) and nothing else
-Minecraft-related. There may be a small trailing charge for partial-month
-EC2/EFS usage from before today's teardown; that is expected and should
-not recur. No budget alert remains, so this check must be done manually.
+**~2026-08-04** — Check AWS Cost Explorer to confirm the July bill is $0
+(or near-zero trailing charges only — partial-month EC2/EFS/domain usage
+from before today's teardown is expected once and will not recur). No
+budget alert remains, so this check must be done manually.
