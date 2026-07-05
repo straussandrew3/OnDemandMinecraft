@@ -5,13 +5,15 @@
 
 ## Summary
 
-All **EC2-based** Minecraft resources (the OnDemandMinecraft project)
-terminated and world backup verified. The `minecraft.andrewbrett.xyz.`
-Route 53 hosted zone deleted. However, a second **CDK/Fargate-based**
-Minecraft infrastructure was discovered still live in the account — it
-was not part of this project's scope but is responsible for the KMS and
-EFS charges previously listed as "unrelated." See the CDK infrastructure
-section below for full details and risk assessment before further action.
+**Decommission complete.** Both Minecraft server deployments (EC2-based
+OnDemandMinecraft and CDK/Fargate-based) are fully torn down. All world
+data backed up and verified locally before any destructive action.
+
+**Irreducible floor going forward: ~$0.50/mo** — the `andrewbrett.xyz.`
+root domain Route 53 hosted zone (unrelated to Minecraft, presumably
+intentional). The KMS key (`alias/mc`) is in PendingDeletion and stops
+billing on **2026-07-11**. After that date, Minecraft-related AWS spend
+is permanently $0.
 
 ## What was non-standard
 
@@ -148,32 +150,79 @@ ECS, EFS, VPC, security groups, and all associated IAM policies.
 **`StateMachineRole` / `LAMBDAROLE` / `CDKToolkit`** — IAM roles and CDK
 bootstrap only, no data. Safe to delete any time; no ongoing cost.
 
-### Recommended next steps (not yet executed)
+### CDK teardown executed (2026-07-04)
 
-1. Back up EFS world data (mount on temp instance, SCP locally).
-2. Delete `minecraft-domain-stack` (stack delete, may need `--retain-resources`
-   for the already-deleted hosted zone).
-3. Delete `minecraft-server-stack` (cleans up EFS, ECS, VPC, everything).
-4. Schedule `alias/mc` KMS key for deletion (7-day window).
-5. Delete `StateMachineRole`, `LAMBDAROLE`, `CDKToolkit` stacks.
+**Step 1 — EFS world backup**
 
-## Final resource sweep (2026-07-04)
+Launched a rescue instance (`i-0a58035edf552eed6`, t3.nano) in a public
+subnet of the CDK VPC with a fresh key pair (`efs-rescue-temp`). Added an
+NFS ingress rule to the EFS security group, mounted the filesystem at
+`/mnt/efs`, and copied the `/minecraft` directory.
 
-Checked: EC2 instances, Elastic IPs, EBS volumes, snapshots, load
-balancers, RDS, S3, Route 53, NAT gateways, budgets.
+- World size: **793 MB** (significantly larger than the EC2 world; this
+  is the more recent/active world)
+- Multiple server jars on the EFS: 1.19.2, 1.19.3, 1.19.4, 1.20, 1.20.1,
+  1.20.2, 1.20.4, 1.21.1
+- Backed up to `~/Documents/efs-world-backup/` (world + config files +
+  `minecraft_server.1.21.1.jar` for verification; libraries/versions cache
+  omitted as re-downloadable)
+- Verified with `verify_world_backup.sh` using 1.21.1 jar: **LOADED**
 
-**All EC2/snapshot/budget resources confirmed gone.** Remaining items:
+**Step 2 — Stack deletions**
 
-| Resource | Detail | Monthly cost | Notes |
-|---|---|---|---|
-| Route 53 hosted zone | `andrewbrett.xyz.` | ~$0.50 | Root domain — likely intentional |
-| S3 bucket | `cdk-hnb659fds-assets-996039603186-us-east-1` | ~$0 | CDK bootstrap bucket, negligible |
-| KMS customer key | `alias/mc` | ~$1.00 | For CDK EFS encryption — see CDK section |
-| EFS filesystem | `fs-081089ad1ba0507bc` | ~$0.41 | CDK world data — see CDK section |
+| Stack | Outcome |
+|---|---|
+| `minecraft-domain-stack` | Deleted cleanly (hosted zone already gone — no error) |
+| `minecraft-server-stack` | Deleted cleanly (ECS, EFS, VPC, subnets, SGs, Lambda, IAM) |
+| `StateMachineRole` | Deleted |
+| `LAMBDAROLE` | Deleted |
+| `CDKToolkit` | Deleted; S3 bootstrap bucket manually emptied and deleted first |
 
-`minecraft.andrewbrett.xyz.` Route 53 zone: **deleted** (see above).
-KMS and EFS are Minecraft-related (CDK stack) — not safe to delete without
-backing up the EFS world data first. See CDK infrastructure section above.
+Two leftover security groups (`instance-sg-1`, `efs-sg-1`) and the VPC
+had a cross-referencing NFS rule that blocked deletion. Revoked both rules
+manually, then deleted the SGs and the VPC.
+
+**Step 3 — KMS key**
+
+`alias/mc` (`8b461e69-7d43-439c-adfa-92dab68f4c10`) scheduled for deletion.
+- State: **PendingDeletion**
+- Deletion date: **2026-07-11**
+- Cost drops from ~$1.00/mo to $0 on that date; cancellable until then.
+
+**Step 4 — Rescue cleanup**
+
+Rescue instance, security group, and key pair all deleted after backup was
+confirmed.
+
+## Final resource sweep (2026-07-04, post-CDK teardown)
+
+Checked: EC2 instances, EBS volumes, snapshots, Elastic IPs, ECS clusters,
+EFS filesystems, VPCs (non-default), CloudFormation stacks, S3 buckets,
+KMS keys, Route 53 zones, Lambda functions, budgets.
+
+**All Minecraft-related resources confirmed gone.**
+
+| Category | Result |
+|---|---|
+| EC2 instances | ✅ None |
+| EBS volumes | ✅ None |
+| Snapshots | ✅ None |
+| Elastic IPs | ✅ None |
+| ECS clusters | ✅ None |
+| EFS filesystems | ✅ None |
+| Non-default VPCs | ✅ None |
+| CloudFormation stacks | ✅ None |
+| S3 buckets | ✅ None (CDK bootstrap bucket deleted) |
+| KMS customer key `alias/mc` | ⏳ PendingDeletion — deletes 2026-07-11 |
+| Budgets | ✅ None |
+
+**Remaining (non-Minecraft, irreducible):**
+
+| Resource | Monthly cost | Notes |
+|---|---|---|
+| Route 53 `andrewbrett.xyz.` | ~$0.50 | Root domain — unrelated to Minecraft |
+| Lambda `email_reminder_lambda` | ~$0 | Unrelated project, within free tier |
+| 4 AWS-managed KMS keys (`aws/s3`, `aws/lambda`, `aws/elasticfilesystem`, `aws/backup`) | $0 | AWS-managed keys are free |
 
 ## Cost history (Jul 2025 – Jun 2026, by service)
 
@@ -202,16 +251,21 @@ snapshotted and deleted in Nov 2025.
 - EC2-Other dropped from ~$5.08 to ~$0.45 in Nov 2025 when the instances were stopped and
   volumes were snapshotted; dropped again to ~$0.32 in Dec 2025 once snapshot storage
   stabilized. Now $0 following today's cleanup.
-- KMS (~$1/mo) and EFS (~$0.41/mo) have been consistent throughout and do not correspond
-  to any Minecraft resource — they originate from a separate project in this account.
-- Route 53 (~$1/mo) covers two hosted zones. `minecraft.andrewbrett.xyz.` is the
-  Minecraft-specific one; `andrewbrett.xyz.` is the root domain.
-- Post-decommission going-forward cost: ~$2.22/mo (KMS + EFS + Route 53 root zone),
-  assuming `minecraft.andrewbrett.xyz.` is also deleted. All from non-Minecraft resources.
+- KMS (~$1/mo) was the `alias/mc` customer key for the CDK EFS. EFS (~$0.41/mo) was
+  the CDK Fargate world store. Both were Minecraft-related — the earlier note calling
+  them "unrelated" was incorrect; that was written before the CDK stack was discovered.
+- Route 53 (~$1/mo) covered two hosted zones. `minecraft.andrewbrett.xyz.` (deleted
+  2026-07-04) and `andrewbrett.xyz.` (root domain, remains at ~$0.50/mo).
+- **Post-decommission going-forward cost: ~$0.50/mo** (root domain only) once the KMS
+  key deletion completes on 2026-07-11. Minecraft-related spend: $0.
 
-## Follow-up (30 days)
+## Follow-up
 
-Check AWS Cost Explorer around **2026-08-04** to confirm EC2 and snapshot
-charges are fully gone from the bill (there may be a small trailing charge
-for partial-month usage before termination). The budget alert has been
-deleted, so this must be done manually.
+**2026-07-11** — KMS key `alias/mc` auto-deletes. No action needed; just
+confirms the $1.00/mo charge disappears from the next bill.
+
+**~2026-08-04** — Check AWS Cost Explorer to confirm the July bill shows
+only the `andrewbrett.xyz.` Route 53 charge (~$0.50) and nothing else
+Minecraft-related. There may be a small trailing charge for partial-month
+EC2/EFS usage from before today's teardown; that is expected and should
+not recur. No budget alert remains, so this check must be done manually.
